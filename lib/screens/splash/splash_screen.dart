@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../home/home_screen.dart';
-import '../home/home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -59,7 +58,6 @@ class _SplashScreenState extends State<SplashScreen>
     });
   }
 
-
   @override
   void dispose() {
     _logoController.dispose();
@@ -73,7 +71,6 @@ class _SplashScreenState extends State<SplashScreen>
       backgroundColor: const Color(0xFF030307),
       body: Stack(
         children: [
-          // Background glow
           Positioned(
             top: 180,
             left: -100,
@@ -82,7 +79,6 @@ class _SplashScreenState extends State<SplashScreen>
               size: 300,
             ),
           ),
-
           Positioned(
             top: 300,
             right: -120,
@@ -91,8 +87,6 @@ class _SplashScreenState extends State<SplashScreen>
               size: 300,
             ),
           ),
-
-          // Bottom waves
           const Align(
             alignment: Alignment.bottomCenter,
             child: SizedBox(
@@ -103,14 +97,11 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-
           SafeArea(
             child: Center(
               child: Column(
                 children: [
                   const Spacer(flex: 3),
-
-                  // Animated V Logo
                   ScaleTransition(
                     scale: _logoScale,
                     child: FadeTransition(
@@ -121,10 +112,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 35),
-
-                  // VideoMitra name
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: ShaderMask(
@@ -150,10 +138,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 14),
-
-                  // Tagline
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: const Text(
@@ -166,10 +151,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-
                   const Spacer(flex: 2),
-
-                  // Animated Loader
                   AnimatedBuilder(
                     animation: _loaderController,
                     builder: (context, child) {
@@ -182,9 +164,7 @@ class _SplashScreenState extends State<SplashScreen>
                       );
                     },
                   ),
-
                   const Spacer(flex: 2),
-
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: const Text(
@@ -196,7 +176,6 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 30),
                 ],
               ),
@@ -228,14 +207,11 @@ class _SplashScreenState extends State<SplashScreen>
   }
 }
 
-// ================= VIDEO MITRA LOGO =================
-
 class _VideoMitraLogoPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final centerX = size.width / 2;
 
-    // Left V / Film strip
     final leftPath = Path()
       ..moveTo(25, 20)
       ..lineTo(78, 20)
@@ -262,7 +238,6 @@ class _VideoMitraLogoPainter extends CustomPainter {
 
     canvas.drawPath(leftPath, leftPaint);
 
-    // Right side / Play shape
     final rightPath = Path()
       ..moveTo(centerX, 175)
       ..lineTo(120, 55)
@@ -287,7 +262,6 @@ class _VideoMitraLogoPainter extends CustomPainter {
 
     canvas.drawPath(rightPath, rightPaint);
 
-    // Film holes
     final holePaint = Paint()..color = const Color(0xFF07070D);
 
     for (int i = 0; i < 5; i++) {
@@ -305,7 +279,6 @@ class _VideoMitraLogoPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Play button
     final playPath = Path()
       ..moveTo(160, 58)
       ..lineTo(160, 100)
@@ -319,7 +292,6 @@ class _VideoMitraLogoPainter extends CustomPainter {
         ..style = PaintingStyle.fill,
     );
 
-    // Glow under logo
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(centerX, 215),
@@ -341,8 +313,6 @@ class _VideoMitraLogoPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-
-// ================= LOADER =================
 
 class _LoaderPainter extends CustomPainter {
   @override
@@ -374,8 +344,6 @@ class _LoaderPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-
-// ================= BOTTOM WAVES =================
 
 class _WavePainter extends CustomPainter {
   const _WavePainter();
