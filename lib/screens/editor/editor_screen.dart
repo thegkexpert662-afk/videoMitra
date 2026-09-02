@@ -10,236 +10,52 @@ import '../../controllers/editor_controller.dart';
 import '../../models/editor_models.dart';
 import '../../services/export/export_service.dart';
 
-class EditorScreen extends StatefulWidget {
-  final List<File> mediaFiles;
-  final ProjectModel? project;
-  const EditorScreen({super.key, required this.mediaFiles, this.project});
-  @override State<EditorScreen> createState() => _EditorScreenState();
+class VideoMitraEditorScreen extends StatefulWidget {
+  final List<File> mediaFiles; final ProjectModel? project;
+  const VideoMitraEditorScreen({super.key, required this.mediaFiles, this.project});
+  @override State<VideoMitraEditorScreen> createState()=>_VideoMitraEditorScreenState();
 }
 
-class _EditorScreenState extends State<EditorScreen> {
-  late final EditorController editor;
-  final picker = ImagePicker();
-  VideoPlayerController? player;
-  Timer? autosave;
-  bool loading = true;
-  bool exporting = false;
-  String? error;
+class _VideoMitraEditorScreenState extends State<VideoMitraEditorScreen> {
+  late final EditorController editor; final ImagePicker picker=ImagePicker(); VideoPlayerController? player; Timer? autosave;
+  bool loading=true, exporting=false; double exportProgress=0; String? error;
+  @override void initState(){super.initState();editor=EditorController();if(widget.project!=null)editor.project=widget.project!;else editor.initialize(widget.mediaFiles);editor.addListener(_changed);_openClip(0);autosave=Timer.periodic(const Duration(seconds:12),(_){if(editor.dirty)editor.save();});}
+  void _changed(){if(mounted)setState((){});final i=editor.clipAt(editor.playhead);if(i>=0&&i!=editor.selectedClip)_openClip(i,autoSeek:true);}
+  Future<void> _openClip(int i,{bool autoSeek=false})async{if(i<0||i>=editor.project.clips.length){if(mounted)setState(()=>loading=false);return;}final c=editor.project.clips[i];await player?.dispose();player=null;if(mounted)setState((){loading=true;error=null;});if(c.kind==MediaKind.image){editor.selectedClip=i;if(mounted)setState(()=>loading=false);return;}try{final p=VideoPlayerController.file(c.file);player=p;await p.initialize();if(c.sourceDuration==Duration.zero)editor.updateClipDuration(i,p.value.duration);await p.setPlaybackSpeed(c.speed);p.addListener(_tick);editor.selectedClip=i;if(autoSeek){final local=editor.playhead-editor.clipStart(i);await p.seekTo(c.start+Duration(milliseconds:(local.inMilliseconds*c.speed).round()));}else{await p.seekTo(c.start);}if(mounted)setState(()=>loading=false);}catch(e){if(mounted)setState((){loading=false;error='Video load failed: $e';});}}
+  void _tick(){final p=player;if(p==null||!p.value.isInitialized||!mounted||editor.project.clips.isEmpty)return;final c=editor.project.clips[editor.selectedClip];final pos=p.value.position;final local=((pos-c.start).inMilliseconds/c.speed).round().clamp(0,c.duration.inMilliseconds);editor.setPlayhead(editor.clipStart(editor.selectedClip)+Duration(milliseconds:local));if(pos>=c.end&&p.value.isPlaying){if(editor.selectedClip+1<editor.project.clips.length){_openClip(editor.selectedClip+1);Future.microtask(()=>player?.play());}else{p.pause();}}}
+  @override void dispose(){autosave?.cancel();editor.removeListener(_changed);editor.save();player?.dispose();editor.dispose();super.dispose();}
+  String _time(Duration d){final m=d.inMinutes.remainder(60).toString().padLeft(2,'0'),s=d.inSeconds.remainder(60).toString().padLeft(2,'0');return d.inHours>0?'${d.inHours}:$m:$s':'$m:$s';}
+  Color _color(String v){var h=v.replaceAll('#','');if(h.length==6)h='FF$h';if(h.length!=8)return Colors.white;return Color(int.parse(h,radix:16));}
+  double get _ratio{switch(editor.project.ratio){case CanvasRatio.r9x16:return 9/16;case CanvasRatio.r16x9:return 16/9;case CanvasRatio.r1x1:return 1;case CanvasRatio.r4x3:return 4/3;case CanvasRatio.r4x5:return 4/5;case CanvasRatio.original:return player?.value.isInitialized==true?player!.value.aspectRatio:16/9;}}
 
-  @override
-  void initState() {
-    super.initState();
-    editor = EditorController();
-    if (widget.project != null) {
-      editor.project = widget.project!;
-    } else {
-      editor.initialize(widget.mediaFiles);
-    }
-    editor.addListener(_changed);
-    _openClip(0);
-    autosave = Timer.periodic(const Duration(seconds: 12), (_) { if (editor.dirty) editor.save(); });
-  }
+  Widget _preview(){final c=editor.project.clips.isEmpty?null:editor.project.clips[editor.selectedClip];Widget media;if(c==null)media=const Center(child:Text('Import media to start'));else if(c.kind==MediaKind.image)media=Image.file(c.file,fit:BoxFit.contain);else if(loading)media=const Center(child:CircularProgressIndicator());else if(error!=null)media=Center(child:Padding(padding:const EdgeInsets.all(16),child:Text(error!,textAlign:TextAlign.center)));else media=VideoPlayer(player!);if(c!=null){final t=c.transform;media=Transform.translate(offset:Offset(t.panX*70,t.panY*70),child:Transform.rotate(angle:t.rotation,child:Transform.scale(scale:t.zoom,child:media)));}
+    final active=editor.project.elements.where((e)=>editor.playhead>=e.start&&editor.playhead<=e.end).toList()..sort((a,b)=>a.layer.compareTo(b.layer));return Center(child:AspectRatio(aspectRatio:_ratio,child:ClipRect(child:Stack(fit:StackFit.expand,children:[Container(color:_color(editor.project.backgroundColor??'#000000')),media,for(final e in active.where((e)=>e.kind!=ElementKind.vfx))_element(e),for(final e in active.where((e)=>e.kind==ElementKind.vfx))_vfx(e),if(exporting)Container(color:Colors.black54,child:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[const CircularProgressIndicator(),const SizedBox(height:10),Text('Exporting ${(exportProgress*100).round()}%')])))]))));}
+  Widget _element(EditorElement e){final k=editor.interpolatedKeyframe(e,editor.playhead);final x=k?.x??e.x,y=k?.y??e.y,scale=k?.scale??e.scale,rot=k?.rotation??e.rotation,op=k?.opacity??e.opacity;Widget child;if(e.kind==ElementKind.text){child=Container(color:e.backgroundColor=='#00000000'?Colors.transparent:_color(e.backgroundColor),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),child:Text(e.text,textAlign:TextAlign.center,style:TextStyle(color:_color(e.color),fontSize:e.fontSize*scale,fontWeight:e.bold?FontWeight.bold:FontWeight.normal,fontStyle:e.italic?FontStyle.italic:FontStyle.normal,shadows:e.shadow?const[Shadow(blurRadius:5,offset:Offset(2,2))]:null)));}else if(e.kind==ElementKind.image&&e.assetPath!=null){child=Image.file(File(e.assetPath!),fit:BoxFit.contain);}else{child=Text(e.kind==ElementKind.video?'🎞️':(e.text.isEmpty?'✨':e.text),style:TextStyle(fontSize:48*scale));}return Align(alignment:Alignment(x*2-1,y*2-1),child:Opacity(opacity:op.clamp(0,1),child:Transform.rotate(angle:rot,child:child)));}
+  Widget _vfx(EditorElement e){switch(e.text.toLowerCase()){case'blur':return Positioned.fill(child:BackdropFilter(filter:ui.ImageFilter.blur(sigmaX:8*e.intensity,sigmaY:8*e.intensity),child:Container(color:Colors.transparent)));case'flash':return Positioned.fill(child:Container(color:Colors.white.withOpacity(.35*e.intensity)));case'zoom':return const SizedBox();default:return const SizedBox();}}
 
-  void _changed() {
-    if (mounted) setState(() {});
-    final i = editor.clipAt(editor.playhead);
-    if (i >= 0 && i != editor.selectedClip) _openClip(i, autoSeek: true);
-  }
+  Future<void> _canvas()async{final r=await _choice<CanvasRatio>('Canvas / Ratio',const[_Choice('Original',CanvasRatio.original),_Choice('9:16',CanvasRatio.r9x16),_Choice('16:9',CanvasRatio.r16x9),_Choice('1:1',CanvasRatio.r1x1),_Choice('4:3',CanvasRatio.r4x3),_Choice('4:5',CanvasRatio.r4x5)],editor.project.ratio);if(r!=null)editor.setCanvas(r);}
+  Future<void> _trim()async{if(editor.project.clips.isEmpty)return;final c=editor.project.clips[editor.selectedClip];if(c.kind==MediaKind.image){_snack('Image duration is 5 seconds.');return;}var s=c.start.inMilliseconds.toDouble(),e=c.end.inMilliseconds.toDouble();final r=await showModalBottomSheet<RangeValues>(context:context,isScrollControlled:true,backgroundColor:const Color(0xFF111118),builder:(_)=>StatefulBuilder(builder:(ctx,set)=>Padding(padding:const EdgeInsets.all(18),child:Column(mainAxisSize:MainAxisSize.min,children:[const Text('Trim',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),RangeSlider(min:0,max:c.sourceDuration.inMilliseconds.toDouble(),values:RangeValues(s,e),onChanged:(v)=>set((){s=v.start;e=v.end;})),Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Text(_time(Duration(milliseconds:s.round()))),Text(_time(Duration(milliseconds:e.round())))]),FilledButton(onPressed:()=>Navigator.pop(ctx,RangeValues(s,e)),child:const Text('Apply'))]))));if(r!=null){editor.trimSelected(Duration(milliseconds:r.start.round()),Duration(milliseconds:r.end.round()));await _openClip(editor.selectedClip);}}
+  Future<void> _transitions()async{if(editor.project.clips.length<2){_snack('Add at least two clips first.');return;}final i=editor.selectedClip.clamp(0,editor.project.clips.length-2).toInt();final type=await _choice<TransitionType>('Transition after clip ${i+1}',const[_Choice('Fade',TransitionType.fade),_Choice('Dissolve',TransitionType.dissolve),_Choice('Slide',TransitionType.slide),_Choice('Zoom',TransitionType.zoom),_Choice('Wipe',TransitionType.wipe),_Choice('Blur',TransitionType.blur),_Choice('Push',TransitionType.push)],editor.project.clips[i].transitionAfter);if(type==null)return;final d=await showDialog<double>(context:context,builder:(_)=>_SliderDialog(title:'Transition duration',value:editor.project.clips[i].transitionDuration.inMilliseconds.toDouble(),min:100,max:1500));if(d!=null)editor.setTransition(i,type,Duration(milliseconds:d.round()));}
 
-  Future<void> _openClip(int index, {bool autoSeek = false}) async {
-    if (index < 0 || index >= editor.project.clips.length) {
-      if (mounted) setState(() => loading = false);
-      return;
-    }
-    final clip = editor.project.clips[index];
-    await player?.dispose();
-    player = null;
-    if (mounted) setState(() { loading = true; error = null; });
-    if (clip.kind == MediaKind.image) {
-      editor.selectedClip = index;
-      if (mounted) setState(() => loading = false);
-      return;
-    }
-    try {
-      final p = VideoPlayerController.file(clip.file);
-      player = p;
-      await p.initialize();
-      if (clip.sourceDuration == Duration.zero) editor.updateClipDuration(index, p.value.duration);
-      await p.setPlaybackSpeed(clip.speed);
-      p.addListener(_playerTick);
-      editor.selectedClip = index;
-      if (autoSeek) {
-        final local = editor.playhead - editor.clipStart(index);
-        final source = clip.start + Duration(milliseconds: (local.inMilliseconds * clip.speed).round());
-        await p.seekTo(source < clip.start ? clip.start : source);
-      } else {
-        await p.seekTo(clip.start);
-      }
-      if (mounted) setState(() => loading = false);
-    } catch (e) {
-      if (mounted) setState(() { loading = false; error = 'Video load failed: $e'; });
-    }
-  }
+  Future<void> _textEditor()async{EditorElement? target;for(final e in editor.project.elements.reversed){if(e.kind==ElementKind.text){target=e;break;}}final controller=TextEditingController(text:target?.text??'Your text');double size=target?.fontSize??32;bool bold=target?.bold??false,italic=target?.italic??false,outline=target?.outline??false,shadow=target?.shadow??false;String color=target?.color??'#FFFFFF';TextAnimation animation=target?.animation??TextAnimation.none;final saved=await showModalBottomSheet<bool>(context:context,isScrollControlled:true,backgroundColor:const Color(0xFF111118),builder:(ctx)=>StatefulBuilder(builder:(ctx,set)=>Padding(padding:EdgeInsets.only(left:18,right:18,top:18,bottom:MediaQuery.viewInsetsOf(ctx).bottom+18),child:SingleChildScrollView(child:Column(children:[const Text('Advanced Text',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),TextField(controller:controller,maxLines:3,decoration:const InputDecoration(labelText:'Text')),Row(children:[const Text('Size'),Expanded(child:Slider(min:12,max:120,value:size,onChanged:(v)=>set(()=>size=v)))]),Wrap(spacing:8,children:[FilterChip(label:const Text('Bold'),selected:bold,onSelected:(v)=>set(()=>bold=v)),FilterChip(label:const Text('Italic'),selected:italic,onSelected:(v)=>set(()=>italic=v)),FilterChip(label:const Text('Outline'),selected:outline,onSelected:(v)=>set(()=>outline=v)),FilterChip(label:const Text('Shadow'),selected:shadow,onSelected:(v)=>set(()=>shadow=v))]),TextField(decoration:const InputDecoration(labelText:'Color #RRGGBB'),controller:TextEditingController(text:color),onChanged:(v)=>color=v),DropdownButton<TextAnimation>(value:animation,isExpanded:true,items:TextAnimation.values.map((a)=>DropdownMenuItem(value:a,child:Text(a.name))).toList(),onChanged:(v){if(v!=null)set(()=>animation=v);}),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Save'))]))));if(saved!=true){controller.dispose();return;}if(target==null){editor.addText(controller.text);}for(final e in editor.project.elements.reversed){if(e.kind==ElementKind.text){editor.selectedElementId=e.id;break;}}editor.updateSelectedText(text:controller.text,color:color,fontSize:size,bold:bold,italic:italic,outline:outline,shadow:shadow,animation:animation);controller.dispose();}
 
-  void _playerTick() {
-    final p = player;
-    if (p == null || !p.value.isInitialized || !mounted || editor.project.clips.isEmpty) return;
-    final clip = editor.project.clips[editor.selectedClip];
-    final source = p.value.position;
-    final localMs = ((source - clip.start).inMilliseconds / clip.speed).round().clamp(0, clip.duration.inMilliseconds).toInt();
-    editor.setPlayhead(editor.clipStart(editor.selectedClip) + Duration(milliseconds: localMs));
-    if (source >= clip.end && p.value.isPlaying) {
-      if (editor.selectedClip + 1 < editor.project.clips.length) {
-        _openClip(editor.selectedClip + 1);
-        Future.microtask(() => player?.play());
-      } else {
-        p.pause();
-      }
-    }
-  }
+  Future<void> _crop()async{final c=editor.project.clips[editor.selectedClip];double zoom=c.transform.zoom,panX=c.transform.panX,panY=c.transform.panY,rot=c.transform.rotation;final ok=await showModalBottomSheet<bool>(context:context,isScrollControlled:true,backgroundColor:const Color(0xFF111118),builder:(_)=>StatefulBuilder(builder:(ctx,set)=>Padding(padding:const EdgeInsets.all(18),child:Column(mainAxisSize:MainAxisSize.min,children:[const Text('Crop / Zoom / Pan / Rotate',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),Text('Zoom ${zoom.toStringAsFixed(2)}x'),Slider(min:1,max:4,value:zoom,onChanged:(v)=>set(()=>zoom=v)),Text('Pan X ${panX.toStringAsFixed(2)}'),Slider(min:-1,max:1,value:panX,onChanged:(v)=>set(()=>panX=v)),Text('Pan Y ${panY.toStringAsFixed(2)}'),Slider(min:-1,max:1,value:panY,onChanged:(v)=>set(()=>panY=v)),Text('Rotation ${(rot*57.3).round()}°'),Slider(min:-3.14,max:3.14,value:rot,onChanged:(v)=>set(()=>rot=v)),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Apply'))]))));if(ok==true)editor.setCrop(zoom:zoom,panX:panX,panY:panY,rotation:rot);}
+  Future<void> _addVideoOverlay()async{final f=await FilePicker.platform.pickFiles(type:FileType.video);if(f?.files.single.path==null)return;editor.addElement(EditorElement(id:'overlay_video_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.video,assetPath:f!.files.single.path,start:editor.playhead,end:editor.playhead+const Duration(seconds:5),x:.5,y:.5));_snack('Video overlay added and will be rendered on export.');}
+  Future<void> _overlayImage()async{final f=await picker.pickImage(source:ImageSource.gallery);if(f==null)return;editor.addElement(EditorElement(id:'overlay_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.image,assetPath:f.path,start:editor.playhead,end:editor.playhead+const Duration(seconds:5)));}
+  Future<void> _keyframe()async{if(editor.selectedElementId==null){for(final e in editor.project.elements.reversed){if(e.kind==ElementKind.text||e.kind==ElementKind.image||e.kind==ElementKind.sticker){editor.selectedElementId=e.id;break;}}}if(editor.selectedElementId==null){_snack('Add text, sticker or overlay first.');return;}editor.addKeyframe();_snack('Keyframe saved at ${_time(editor.playhead)}');}
+  Future<void> _chroma()async{final bg=await FilePicker.platform.pickFiles(type:FileType.media);if(bg?.files.single.path==null)return;double similarity=editor.project.clips[editor.selectedClip].chromaSimilarity??.4,blend=editor.project.clips[editor.selectedClip].chromaBlend??.08;final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,set)=>AlertDialog(title:const Text('Green Screen'),content:Column(mainAxisSize:MainAxisSize.min,children:[Text('Similarity ${similarity.toStringAsFixed(2)}'),Slider(min:.05,max:1,value:similarity,onChanged:(v)=>set(()=>similarity=v)),Text('Edge blend ${blend.toStringAsFixed(2)}'),Slider(min:0,max:.5,value:blend,onChanged:(v)=>set(()=>blend=v))]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Apply'))]));if(ok==true)editor.setChroma(similarity:similarity,blend:blend,color:'#00FF00',backgroundPath:bg!.files.single.path);}
 
-  @override
-  void dispose() {
-    autosave?.cancel();
-    editor.removeListener(_changed);
-    editor.save();
-    player?.dispose();
-    editor.dispose();
-    super.dispose();
-  }
+  Future<void> _export()async{if(exporting)return;int res=1080,fps=30;String quality='High';final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,set)=>AlertDialog(title:const Text('Export'),content:Column(mainAxisSize:MainAxisSize.min,children:[DropdownButtonFormField<int>(value:res,items:const[480,720,1080,1440,2160].map((x)=>DropdownMenuItem(value:x,child:Text('${x}p'))).toList(),onChanged:(v){if(v!=null)set(()=>res=v);}),DropdownButtonFormField<int>(value:fps,items:const[24,25,30,60].map((x)=>DropdownMenuItem(value:x,child:Text('$x FPS'))).toList(),onChanged:(v){if(v!=null)set(()=>fps=v);}),DropdownButtonFormField<String>(value:quality,items:const['Low','Medium','High','Custom'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v){if(v!=null)set(()=>quality=v);})]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Export'))])));if(ok!=true)return;setState(()=>exporting=true);try{final file=await ExportService().export(editor.project,ExportOptions(resolution:res,fps:fps,quality:quality),onProgress:(p){if(mounted)setState(()=>exportProgress=p);});if(mounted){setState(()=>exporting=false);final share=await showDialog<bool>(context:context,builder:(_)=>AlertDialog(title:const Text('Export complete'),content:const Text('Video exported successfully.'),actions:[TextButton(onPressed:()=>Navigator.pop(context,false),child:const Text('Close')),FilledButton(onPressed:()=>Navigator.pop(context,true),child:const Text('Share'))]));if(share==true)await Share.shareXFiles([XFile(file.path)],text:'Created with VideoMitra');}}catch(e){if(mounted){setState(()=>exporting=false);_snack('Export failed: $e');}}}
 
-  String _time(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return h > 0 ? '$h:$m:$s' : '$m:$s';
-  }
-
-  double get _ratio {
-    switch (editor.project.ratio) {
-      case CanvasRatio.r9x16: return 9 / 16;
-      case CanvasRatio.r16x9: return 16 / 9;
-      case CanvasRatio.r1x1: return 1;
-      case CanvasRatio.r4x3: return 4 / 3;
-      case CanvasRatio.r4x5: return 4 / 5;
-      case CanvasRatio.original: return player?.value.isInitialized == true ? player!.value.aspectRatio : 16 / 9;
-    }
-  }
-
-  Color? _color(String? v) {
-    if (v == null) return null;
-    final h = v.replaceAll('#', '');
-    if (h.length != 6) return null;
-    return Color(int.parse('FF$h', radix: 16));
-  }
-
-  Widget _preview() {
-    final clip = editor.project.clips.isEmpty ? null : editor.project.clips[editor.selectedClip];
-    Widget media;
-    if (clip == null) {
-      media = const Center(child: Text('Import media to start'));
-    } else if (clip.kind == MediaKind.image) {
-      media = Image.file(clip.file, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Center(child: Text('Image load failed')));
-    } else if (loading) {
-      media = const Center(child: CircularProgressIndicator());
-    } else if (error != null) {
-      media = Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(error!, textAlign: TextAlign.center)));
-    } else if (player?.value.isInitialized == true) {
-      media = FittedBox(fit: BoxFit.contain, child: SizedBox(width: player!.value.size.width, height: player!.value.size.height, child: VideoPlayer(player!)));
-    } else {
-      media = const Center(child: CircularProgressIndicator());
-    }
-    media = _previewFilter(media);
-    final active = editor.project.elements.where((e) => editor.playhead >= e.start && editor.playhead <= e.end).toList()..sort((a, b) => a.layer.compareTo(b.layer));
-    for (final e in active.where((e) => e.kind == ElementKind.vfx)) {
-      switch (e.text.toLowerCase()) {
-        case 'blur': media = BackdropFilter(filter: ui.ImageFilter.blur(sigmaX: 8 * e.intensity, sigmaY: 8 * e.intensity), child: media); break;
-        case 'flash': media = Stack(children: [media, Container(color: Colors.white.withOpacity(.35 * e.intensity))]); break;
-        case 'zoom': media = Transform.scale(scale: 1 + .12 * e.intensity, child: media); break;
-      }
-    }
-    return Center(child: AspectRatio(aspectRatio: _ratio, child: ClipRect(child: Stack(fit: StackFit.expand, children: [
-      Container(color: _color(editor.project.backgroundColor) ?? Colors.black), media,
-      for (final e in active.where((e) => e.kind != ElementKind.vfx)) _element(e),
-      if (exporting) Container(color: Colors.black54, child: const Center(child: CircularProgressIndicator())),
-    ]))));
-  }
-
-  Widget _previewFilter(Widget child) {
-    if (editor.project.filter == FilterPreset.blackWhite) {
-      return ColorFiltered(colorFilter: const ColorFilter.matrix([.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,0,0,0,1,0]), child: child);
-    }
-    final a = editor.project.adjustments;
-    final b = (a['brightness'] ?? 0) / 100;
-    final c = 1 + (a['contrast'] ?? 0) / 100;
-    final s = 1 + (a['saturation'] ?? 0) / 100;
-    if (editor.project.filter == FilterPreset.bright || b != 0 || c != 1 || s != 1) {
-      return ColorFiltered(colorFilter: ColorFilter.matrix([c,0,0,0,b*255,0,c,0,0,b*255,0,0,c,0,b*255,0,0,0,1,0]), child: child);
-    }
-    return child;
-  }
-
-  Widget _element(EditorElement e) {
-    Widget child;
-    if (e.kind == ElementKind.text) {
-      child = Text(e.text, textAlign: TextAlign.center, style: TextStyle(color: _color(e.color) ?? Colors.white, fontSize: e.fontSize * e.scale, fontWeight: e.bold ? FontWeight.bold : FontWeight.normal, fontStyle: e.italic ? FontStyle.italic : FontStyle.normal, shadows: e.shadow ? const [Shadow(blurRadius: 5, offset: Offset(2,2))] : null));
-    } else if (e.kind == ElementKind.image && e.assetPath != null) {
-      child = Image.file(File(e.assetPath!), fit: BoxFit.contain);
-    } else {
-      child = Text(e.text.isEmpty ? '✨' : e.text, style: TextStyle(fontSize: 48 * e.scale));
-    }
-    return Positioned(left: e.x * MediaQuery.sizeOf(context).width * .8 - 50, top: e.y * MediaQuery.sizeOf(context).height * .45 - 30, child: Opacity(opacity: e.opacity.clamp(0, 1), child: Transform.rotate(angle: e.rotation, child: child)));
-  }
-
-  Future<void> _canvas() async {
-    final r = await showModalBottomSheet<CanvasRatio>(context: context, backgroundColor: const Color(0xFF111118), builder: (_) => _ChoiceSheet(title: 'Canvas / Ratio', items: const [_Choice('Original',CanvasRatio.original),_Choice('9:16',CanvasRatio.r9x16),_Choice('16:9',CanvasRatio.r16x9),_Choice('1:1',CanvasRatio.r1x1),_Choice('4:3',CanvasRatio.r4x3),_Choice('4:5',CanvasRatio.r4x5)], current: editor.project.ratio));
-    if (r != null) editor.setCanvas(r);
-  }
-
-  Future<void> _trim() async {
-    if (editor.project.clips.isEmpty) return;
-    final c = editor.project.clips[editor.selectedClip];
-    if (c.kind == MediaKind.image) { _snack('Image clips use a 5 second default duration.'); return; }
-    var s = c.start.inMilliseconds.toDouble(), e = c.end.inMilliseconds.toDouble();
-    final r = await showModalBottomSheet<RangeValues>(context: context, isScrollControlled: true, backgroundColor: const Color(0xFF111118), builder: (_) => StatefulBuilder(builder: (ctx, set) => Padding(padding: const EdgeInsets.all(18), child: Column(mainAxisSize: MainAxisSize.min, children: [const Text('Trim Video',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),const SizedBox(height:12),Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Text('Start ${_time(Duration(milliseconds:s.round()))}'),Text('End ${_time(Duration(milliseconds:e.round()))}')]),RangeSlider(min:0,max:c.sourceDuration.inMilliseconds.toDouble(),values:RangeValues(s,e),onChanged:(v){set((){s=v.start;e=v.end;});player?.seekTo(Duration(milliseconds:v.start.round()));}),Text('Selected ${_time(Duration(milliseconds:(e-s).round()))}'),const SizedBox(height:10),FilledButton(onPressed:()=>Navigator.pop(ctx,RangeValues(s,e)),child:const Text('Apply'))]))));
-    if (r != null) { editor.trimSelected(Duration(milliseconds:r.start.round()), Duration(milliseconds:r.end.round())); await _openClip(editor.selectedClip); _snack('Trim applied'); }
-  }
-
-  void _split() { editor.splitAtPlayhead(); _snack('Split at playhead'); }
-  void _delete() { editor.deleteSelectedClip(); _openClip(editor.selectedClip); _snack('Selected clip deleted'); }
-
-  Future<void> _audio() async { final f=await FilePicker.platform.pickFiles(type:FileType.audio); if(f?.files.single.path==null)return; editor.addAudio(AudioTrack(id:'audio_${DateTime.now().millisecondsSinceEpoch}',file:File(f!.files.single.path!),start:Duration.zero,end:const Duration(minutes:30))); _snack('Audio track added'); }
-  Future<void> _text() async { final c=TextEditingController(text:'Your text'); final t=await showDialog<String>(context:context,builder:(_)=>AlertDialog(backgroundColor:const Color(0xFF17171F),title:const Text('Add Text'),content:TextField(controller:c,autofocus:true,maxLines:3),actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(context,c.text),child:const Text('Add'))])); c.dispose(); if(t!=null&&t.trim().isNotEmpty)editor.addText(t); }
-  Future<void> _filters() async { final f=await showModalBottomSheet<FilterPreset>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>_ChoiceSheet(title:'Filters',items:const[_Choice('Normal',FilterPreset.normal),_Choice('Bright',FilterPreset.bright),_Choice('Contrast',FilterPreset.contrast),_Choice('Warm',FilterPreset.warm),_Choice('Cool',FilterPreset.cool),_Choice('Vintage',FilterPreset.vintage),_Choice('B&W',FilterPreset.blackWhite),_Choice('Cinematic',FilterPreset.cinematic),_Choice('Dramatic',FilterPreset.dramatic)],current:editor.project.filter)); if(f!=null)editor.setFilter(f,1); }
-  Future<void> _adjust() async { final keys=['brightness','contrast','saturation','exposure','temperature','tint','highlights','shadows','sharpness','fade','vignette']; await showModalBottomSheet(context:context,isScrollControlled:true,backgroundColor:const Color(0xFF111118),builder:(_)=>StatefulBuilder(builder:(ctx,set)=>Padding(padding:const EdgeInsets.fromLTRB(18,18,18,28),child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[const Text('Adjust',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),for(final k in keys)Column(children:[Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Text(k),Text('${(editor.project.adjustments[k]??0).round()}')]),Slider(min:-100,max:100,value:(editor.project.adjustments[k]??0).clamp(-100,100),onChanged:(v){editor.setAdjustment(k,v);set((){});})])]))))); }
-  Future<void> _speed() async { const values=[.25,.5,.75,1,1.25,1.5,2]; final s=await showModalBottomSheet<double>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>Wrap(children:[for(final x in values)SizedBox(width:MediaQuery.sizeOf(context).width/3,child:ListTile(title:Text('${x}x',textAlign:TextAlign.center),onTap:()=>Navigator.pop(context,x)))])); if(s!=null){editor.setSpeed(s);await player?.setPlaybackSpeed(s);} }
-  Future<void> _overlay() async { final f=await picker.pickImage(source:ImageSource.gallery); if(f==null)return; editor.addElement(EditorElement(id:'overlay_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.image,assetPath:f.path,start:editor.playhead,end:editor.playhead+const Duration(seconds:5))); }
-  Future<void> _stickers() async { final s=await showModalBottomSheet<String>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>Wrap(children:[for(final x in ['😀','🔥','⭐','❤️','🎉','⚡','✨','🎬'])SizedBox(width:MediaQuery.sizeOf(context).width/4,child:ListTile(title:Text(x,style:const TextStyle(fontSize:30),textAlign:TextAlign.center),onTap:()=>Navigator.pop(context,x)))])); if(s!=null)editor.addElement(EditorElement(id:'sticker_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.sticker,text:s,start:editor.playhead,end:editor.playhead+const Duration(seconds:4))); }
-  Future<void> _effects() async { final s=await showModalBottomSheet<String>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>Wrap(children:[for(final x in ['Blur','Glow','Shake','Flash','Zoom','Motion','Chromatic','Glitch','Fade'])ListTile(leading:const Icon(Icons.auto_awesome),title:Text(x),onTap:()=>Navigator.pop(context,x))])); if(s!=null)editor.addElement(EditorElement(id:'fx_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.vfx,text:s,start:editor.playhead,end:editor.playhead+const Duration(seconds:3),intensity:.7)); }
-  Future<void> _vfx() async { final s=await showModalBottomSheet<String>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>Wrap(children:[for(final x in ['Smoke','Fire','Sparks','Lightning','Explosion','Dust','Fog','Glow','Energy'])ListTile(leading:const Icon(Icons.auto_awesome),title:Text(x),onTap:()=>Navigator.pop(context,x))])); if(s!=null)editor.addElement(EditorElement(id:'vfx_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.vfx,text:s,start:editor.playhead,end:editor.playhead+const Duration(seconds:3),intensity:.7)); }
-  void _keyframe(){editor.addKeyframe();_snack('Keyframe added');}
-  void _chroma(){editor.addElement(EditorElement(id:'chroma_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.vfx,text:'Chroma',start:Duration.zero,end:editor.project.duration,intensity:.45));_snack('Green-screen key added. Export uses green chroma key.');}
-
-  Future<void> _export() async { final o=await showModalBottomSheet<ExportOptions>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>const _ExportSheet()); if(o==null)return; setState(()=>exporting=true); try{final file=await ExportService().export(editor.project,o);if(!mounted)return;setState(()=>exporting=false);await showDialog(context:context,builder:(_)=>AlertDialog(backgroundColor:const Color(0xFF17171F),title:const Text('Export complete'),content:const Text('Video exported successfully.'),actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Close')),FilledButton(onPressed:()async{await Share.shareXFiles([XFile(file.path)],text:'Created with VideoMitra');if(mounted)Navigator.pop(context);},child:const Text('Share'))]));}catch(e){if(mounted){setState(()=>exporting=false);_snack('Export failed: $e');}} }
-  void _snack(String s)=>ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(s),behavior:SnackBarBehavior.floating));
-
-  @override
-  Widget build(BuildContext context){
-    final total=editor.project.duration; final max=total.inMilliseconds.toDouble();
-    return Scaffold(backgroundColor:const Color(0xFF050509),appBar:AppBar(backgroundColor:const Color(0xFF09090F),leading:IconButton(icon:const Icon(Icons.arrow_back),onPressed:()=>Navigator.pop(context)),title:const Text('VideoMitra',style:TextStyle(fontWeight:FontWeight.w800)),actions:[IconButton(onPressed:editor.undo,icon:const Icon(Icons.undo)),IconButton(onPressed:editor.redo,icon:const Icon(Icons.redo)),TextButton(onPressed:_canvas,child:const Text('Canvas')),TextButton(onPressed:_export,child:const Text('Export'))]),body:SafeArea(child:Column(children:[Expanded(flex:6,child:Padding(padding:const EdgeInsets.all(10),child:_preview())),Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Padding(padding:const EdgeInsets.only(left:12),child:Text(_time(editor.playhead))),IconButton(icon:Icon(player?.value.isPlaying==true?Icons.pause_circle_filled:Icons.play_circle_fill,size:40),onPressed:(){final p=player;if(p==null)return;p.value.isPlaying?p.pause():p.play();}),Padding(padding:const EdgeInsets.only(right:12),child:Text(_time(total)))]),Expanded(flex:4,child:Column(children:[_timeline(max),SizedBox(height:92,child:ListView.separated(padding:const EdgeInsets.all(8),scrollDirection:Axis.horizontal,itemCount:editor.project.clips.length,separatorBuilder:(_,__)=>const SizedBox(width:6),itemBuilder:(_,i)=>_clip(i))),const Divider(height:1),SizedBox(height:94,child:ListView.separated(padding:const EdgeInsets.all(8),scrollDirection:Axis.horizontal,itemCount:_tools.length,separatorBuilder:(_,__)=>const SizedBox(width:8),itemBuilder:(_,i){final t=_tools[i];return _Tool(icon:t.$1,label:t.$2,onTap:t.$3);}))]))]));
-  }
-
-  Widget _timeline(double max){final m=max<=0?1:max;final value=editor.playhead.inMilliseconds.clamp(0,m).toDouble();return Column(children:[Slider(min:0,max:m,value:value,onChanged:(v){editor.setPlayhead(Duration(milliseconds:v.round()));final i=editor.clipAt(editor.playhead);if(i>=0&&i!=editor.selectedClip)_openClip(i,autoSeek:true);else if(player!=null&&editor.project.clips.isNotEmpty){final c=editor.project.clips[editor.selectedClip];final local=editor.playhead-editor.clipStart(editor.selectedClip);player!.seekTo(c.start+Duration(milliseconds:(local.inMilliseconds*c.speed).round()));}}),_track('VIDEO',Colors.purple,editor.project.clips.length),_track('AUDIO',Colors.blueGrey,editor.project.audioTracks.length),_track('TEXT',Colors.pink,editor.project.elements.where((e)=>e.kind==ElementKind.text).length),_track('OVERLAY',Colors.amber,editor.project.elements.where((e)=>e.kind==ElementKind.image||e.kind==ElementKind.video).length),_track('VFX',Colors.deepPurple,editor.project.elements.where((e)=>e.kind==ElementKind.vfx||e.kind==ElementKind.sticker).length)]);}
-  Widget _track(String n,Color c,int count)=>Padding(padding:const EdgeInsets.fromLTRB(10,2,10,0),child:Row(children:[SizedBox(width:55,child:Text(n,style:const TextStyle(fontSize:9,color:Colors.white54))),Expanded(child:Container(height:13,decoration:BoxDecoration(color:Colors.white.withOpacity(.04),borderRadius:BorderRadius.circular(4)),child:count==0?null:Align(alignment:Alignment.centerLeft,child:FractionallySizedBox(width:(count/4).clamp(.08,1).toDouble(),child:Container(decoration:BoxDecoration(color:c.withOpacity(.55),borderRadius:BorderRadius.circular(4)))))))]));
-  List<(IconData,String,VoidCallback)> get _tools=>[(Icons.content_cut,'Trim',_trim),(Icons.call_split,'Split',_split),(Icons.delete_outline,'Delete',_delete),(Icons.music_note,'Audio',_audio),(Icons.text_fields,'Text',_text),(Icons.filter_alt,'Filters',_filters),(Icons.tune,'Adjust',_adjust),(Icons.auto_awesome,'Effects',_effects),(Icons.speed,'Speed',_speed),(Icons.layers,'Overlay',_overlay),(Icons.emoji_emotions,'Sticker',_stickers),(Icons.auto_awesome_outlined,'VFX',_vfx),(Icons.videocam_outlined,'Green Screen',_chroma),(Icons.key,'Keyframe',_keyframe),(Icons.crop,'Crop',_canvas),(Icons.volume_off,'Mute',(){editor.toggleMuteOriginal();})];
-  Widget _clip(int i){final c=editor.project.clips[i],sel=i==editor.selectedClip;return GestureDetector(onTap:(){editor.selectClip(i);_openClip(i);},child:AnimatedContainer(duration:const Duration(milliseconds:150),width:150,padding:const EdgeInsets.all(7),decoration:BoxDecoration(color:sel?const Color(0xFF321525):const Color(0xFF171720),borderRadius:BorderRadius.circular(8),border:Border.all(color:sel?const Color(0xFFFF2D75):Colors.white10,width:sel?2:1)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:ClipThumbnail(file:c.file,isImage:c.kind==MediaKind.image)),const SizedBox(height:4),Text('${_time(c.duration)} • ${c.speed}x',style:const TextStyle(fontSize:10,color:Colors.white60))])));}
+  Widget _timeline(){final total=editor.project.duration.inMilliseconds.toDouble().clamp(1,2147483647).toDouble();final value=editor.playhead.inMilliseconds.clamp(0,total.toInt()).toDouble();return Column(children:[Row(children:[Text(_time(editor.playhead)),const Spacer(),Text(_time(editor.project.duration))]),Slider(min:0,max:total,value:value,onChanged:(v)=>editor.setPlayhead(Duration(milliseconds:v.round()))),SizedBox(height:92,child:ListView.separated(scrollDirection:Axis.horizontal,itemCount:editor.project.clips.length,separatorBuilder:(_,__)=>const SizedBox(width:4),itemBuilder:(ctx,i){final c=editor.project.clips[i];return GestureDetector(onTap:()=>editor.selectClip(i),child:Container(width:110*editor.timelineZoom,decoration:BoxDecoration(color:i==editor.selectedClip?const Color(0xFF43203A):const Color(0xFF202027),borderRadius:BorderRadius.circular(8),border:Border.all(color:i==editor.selectedClip?const Color(0xFFFF2D75):Colors.white10)),child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[Icon(c.kind==MediaKind.video?Icons.movie:Icons.image,color:Colors.white70),Text(_time(c.duration),style:const TextStyle(fontSize:11)),if(i<editor.project.clips.length-1)Text(c.transitionAfter.name,style:const TextStyle(fontSize:9,color:Colors.white54))])));}))]);}
+  Widget _tools(){final tools=<EditorTool>[_tool('Trim',Icons.content_cut,_trim),_tool('Split',Icons.call_split,(){editor.splitAtPlayhead();}),_tool('Delete',Icons.delete_outline,(){editor.deleteSelectedClip();}),_tool('Text',Icons.text_fields,_textEditor),_tool('Crop',Icons.crop,_crop),_tool('Speed',Icons.speed,()async{const v=[.25,.5,.75,1,1.25,1.5,2];final s=await _choice<double>('Speed',v.map((x)=>_Choice('${x}x',x)).toList(),editor.project.clips[editor.selectedClip].speed);if(s!=null){editor.setSpeed(s);await player?.setPlaybackSpeed(s);}}),_tool('Transitions',Icons.compare_arrows,_transitions),_tool('Image Overlay',Icons.layers,_overlayImage),_tool('Video Overlay',Icons.video_library,_addVideoOverlay),_tool('Chroma',Icons.grass,_chroma),_tool('Keyframe',Icons.keyframe,_keyframe),_tool('Undo',Icons.undo,(){editor.undo();}),_tool('Redo',Icons.redo,(){editor.redo();})];return SizedBox(height:92,child:ListView.separated(scrollDirection:Axis.horizontal,padding:const EdgeInsets.symmetric(horizontal:10),itemCount:tools.length,separatorBuilder:(_,__)=>const SizedBox(width:8),itemBuilder:(_,i)=>SizedBox(width:76,child:InkWell(onTap:tools[i].action,child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[Icon(tools[i].icon,size:25),const SizedBox(height:5),Text(tools[i].name,textAlign:TextAlign.center,style:const TextStyle(fontSize:10))]))));}
+  EditorTool _tool(String n,IconData i,VoidCallback a)=>EditorTool(n,i,a);
+  Future<T?> _choice<T>(String title,List<_Choice<T>> items,T current)async=>showModalBottomSheet<T>(context:context,backgroundColor:const Color(0xFF111118),builder:(_)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[Padding(padding:const EdgeInsets.all(18),child:Text(title,style:const TextStyle(fontSize:20,fontWeight:FontWeight.bold))),for(final item in items)ListTile(title:Text(item.name),trailing:item.value==current?const Icon(Icons.check):null,onTap:()=>Navigator.pop(context,item.value))])));
+  void _snack(String s){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(s)));}
+  @override Widget build(BuildContext context)=>Scaffold(backgroundColor:const Color(0xFF07070B),appBar:AppBar(backgroundColor:const Color(0xFF07070B),title:const Text('VideoMitra',style:TextStyle(fontWeight:FontWeight.bold)),leading:IconButton(icon:const Icon(Icons.arrow_back),onPressed:()=>Navigator.pop(context)),actions:[IconButton(onPressed:_canvas,icon:const Icon(Icons.aspect_ratio)),IconButton(onPressed:()=>editor.save(),icon:const Icon(Icons.save_outlined)),TextButton(onPressed:_export,child:const Text('EXPORT'))]),body:Column(children:[Expanded(child:Padding(padding:const EdgeInsets.all(10),child:_preview())),Padding(padding:const EdgeInsets.symmetric(horizontal:12),child:_timeline()),const Divider(height:1),_tools()]));
 }
 
-class ClipThumbnail extends StatefulWidget{final File file;final bool isImage;const ClipThumbnail({super.key,required this.file,required this.isImage});@override State<ClipThumbnail> createState()=>_ClipThumbnailState();}
-class _ClipThumbnailState extends State<ClipThumbnail>{VideoPlayerController? p;@override void initState(){super.initState();if(!widget.isImage)_load();}Future<void> _load()async{try{final c=VideoPlayerController.file(widget.file);await c.initialize();await c.setVolume(0);await c.pause();if(mounted)setState(()=>p=c);else c.dispose();}catch(_){}}@override void dispose(){p?.dispose();super.dispose();}@override Widget build(BuildContext context){if(widget.isImage)return ClipRRect(borderRadius:BorderRadius.circular(5),child:Image.file(widget.file,fit:BoxFit.cover,errorBuilder:(_,__,___)=>const ColoredBox(color:Colors.black,child:Icon(Icons.broken_image))));if(p?.value.isInitialized==true)return ClipRRect(borderRadius:BorderRadius.circular(5),child:FittedBox(fit:BoxFit.cover,child:SizedBox(width:p!.value.size.width,height:p!.value.size.height,child:VideoPlayer(p!))));return Container(decoration:BoxDecoration(color:const Color(0xFF252530),borderRadius:BorderRadius.circular(5)),child:const Center(child:Icon(Icons.play_arrow_rounded,color:Colors.white54)));}}
-
-class _Tool extends StatelessWidget{final IconData icon;final String label;final VoidCallback onTap;const _Tool({required this.icon,required this.label,required this.onTap});@override Widget build(BuildContext context)=>InkWell(onTap:onTap,borderRadius:BorderRadius.circular(12),child:Container(width:76,padding:const EdgeInsets.symmetric(vertical:9),decoration:BoxDecoration(color:const Color(0xFF12121A),borderRadius:BorderRadius.circular(12),border:Border.all(color:Colors.white10)),child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[Icon(icon,size:22,color:const Color(0xFFFF2D75)),const SizedBox(height:5),Text(label,style:const TextStyle(fontSize:9),overflow:TextOverflow.ellipsis)])));}
-class _Choice<T>{final String title;final T value;const _Choice(this.title,this.value);}
-class _ChoiceSheet<T> extends StatelessWidget{final String title;final List<_Choice<T>> items;final T current;const _ChoiceSheet({required this.title,required this.items,required this.current});@override Widget build(BuildContext context)=>SafeArea(child:Padding(padding:const EdgeInsets.all(18),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(title,style:const TextStyle(fontSize:20,fontWeight:FontWeight.bold)),const SizedBox(height:12),Wrap(spacing:8,runSpacing:8,children:[for(final i in items)ChoiceChip(label:Text(i.title),selected:i.value==current,onSelected:(_)=>Navigator.pop(context,i.value))]),const SizedBox(height:12)])));}
-class _ExportSheet extends StatefulWidget{const _ExportSheet();@override State<_ExportSheet> createState()=>_ExportSheetState();}
-class _ExportSheetState extends State<_ExportSheet>{int resolution=1080;int fps=30;String quality='High';@override Widget build(BuildContext context)=>SafeArea(child:Padding(padding:const EdgeInsets.all(18),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('Export',style:TextStyle(fontSize:22,fontWeight:FontWeight.bold)),const SizedBox(height:14),const Text('Resolution'),Wrap(children:[for(final r in [480,720,1080,1440,2160])ChoiceChip(label:Text(r==1440?'2K':'${r}p'),selected:resolution==r,onSelected:(_)=>setState(()=>resolution=r))]),const SizedBox(height:8),const Text('FPS'),Wrap(children:[for(final f in [24,25,30,60])ChoiceChip(label:Text('$f'),selected:fps==f,onSelected:(_)=>setState(()=>fps=f))]),const SizedBox(height:8),const Text('Quality'),Wrap(children:[for(final q in ['Low','Medium','High','Custom'])ChoiceChip(label:Text(q),selected:quality==q,onSelected:(_)=>setState(()=>quality=q))]),const SizedBox(height:14),SizedBox(width:double.infinity,child:FilledButton(onPressed:()=>Navigator.pop(context,ExportOptions(resolution:resolution,fps:fps,quality:quality)),child:const Text('Start Export'))])));}
+class EditorTool{final String name;final IconData icon;final VoidCallback action;EditorTool(this.name,this.icon,this.action);}
+class _Choice<T>{final String name;final T value;const _Choice(this.name,this.value);}
+class _SliderDialog extends StatefulWidget{final String title;final double value,min,max;const _SliderDialog({required this.title,required this.value,required this.min,required this.max});@override State<_SliderDialog> createState()=>_SliderDialogState();}
+class _SliderDialogState extends State<_SliderDialog>{late double v;@override void initState(){super.initState();v=widget.value;}@override Widget build(BuildContext c)=>AlertDialog(title:Text(widget.title),content:Slider(min:widget.min,max:widget.max,value:v,onChanged:(x)=>setState(()=>v=x)),actions:[FilledButton(onPressed:()=>Navigator.pop(c,v),child:Text('${v.round()} ms'))]);}
