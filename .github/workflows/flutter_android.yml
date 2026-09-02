@@ -12,32 +12,34 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.7'
           channel: stable
           cache: true
-
-      - name: Restore Android platform files
+      - name: Generate Android platform files
         run: |
           if [ ! -d android ]; then flutter create --platforms=android --org com.videomitra .; fi
-
       - name: Dependencies
         run: flutter pub get
-
       - name: Analyze
         run: flutter analyze
-
       - name: Test
         run: flutter test
-
-      - name: Build APK
+      - name: Build debug APK
+        run: flutter build apk --debug
+      - name: Build release APK
         run: flutter build apk --release
-
+      - name: Build release AAB
+        run: flutter build appbundle --release
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: videomitra-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: videomitra-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
