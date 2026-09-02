@@ -68,10 +68,11 @@ class VideoProcessor {
         case 'blur':parts.add(',boxblur=luma_radius=$strength:luma_power=1:$enable');break;
         case 'glow':parts.add(',gblur=sigma=${2+strength/2}:steps=1:$enable');break;
         case 'flash':parts.add(',eq=brightness=${.65*e.intensity}:$enable');break;
-        case 'zoom':parts.add(',scale=iw*${1+.12*e.intensity}:ih*${1+.12*e.intensity},crop=$width:$height:((iw-$width)/2):((ih-$height)/2):$enable');break;
+        case 'zoom':parts.add(',scale=iw*${1+.12*e.intensity}:ih*${1+.12*e.intensity},crop=$width:$height:x=(iw-$width)/2:y=(ih-$height)/2:$enable');break;
         case 'chromatic':parts.add(',chromashift=cbh=$strength:crh=-$strength:$enable');break;
         case 'glitch':parts.add(',noise=alls=${(strength*2).clamp(1,30)}:allf=t:$enable');break;
         case 'fade':parts.add(',eq=brightness=-${.35*e.intensity}:$enable');break;
+        case 'chroma':parts.add(',chromakey=0x00ff00:${(.08+.55*e.intensity).clamp(.01,1)}:.08:$enable');break;
         case 'shake':case 'motion':parts.add(',rotate=0.02*sin(80*t):fillcolor=black:$enable');break;
       }
     }
