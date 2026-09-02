@@ -50,15 +50,7 @@ class EditorController extends ChangeNotifier {
   }
 
   Duration clipStart(int index) => project.clips.take(index).fold(Duration.zero, (a, b) => a + b.duration);
-
-  int clipAt(Duration position) {
-    var cursor = Duration.zero;
-    for (var i = 0; i < project.clips.length; i++) {
-      cursor += project.clips[i].duration;
-      if (position <= cursor) return i;
-    }
-    return project.clips.isEmpty ? -1 : project.clips.length - 1;
-  }
+  int clipAt(Duration position) { var cursor = Duration.zero; for (var i = 0; i < project.clips.length; i++) { cursor += project.clips[i].duration; if (position <= cursor) return i; } return project.clips.isEmpty ? -1 : project.clips.length - 1; }
 
   void updateClipDuration(int index, Duration duration) {
     if (index < 0 || index >= project.clips.length || duration <= Duration.zero) return;
@@ -84,8 +76,8 @@ class EditorController extends ChangeNotifier {
     final splitSourceMs = clip.start.inMilliseconds + (localMs / clip.speed).round();
     if (splitSourceMs <= clip.start.inMilliseconds || splitSourceMs >= clip.end.inMilliseconds) return;
     _snapshot();
-    final left = clip.copyWith(end: Duration(milliseconds: splitSourceMs));
-    final right = EditorClip(id: '${clip.id}_split_${DateTime.now().millisecondsSinceEpoch}', file: clip.file, kind: clip.kind, sourceDuration: clip.sourceDuration, start: Duration(milliseconds: splitSourceMs), end: clip.end, speed: clip.speed, muted: clip.muted, volume: clip.volume);
+    final left = clip.copyWith(end: Duration(milliseconds: splitSourceMs), transitionAfter: TransitionType.fade);
+    final right = clip.copyWith(id: null, start: Duration(milliseconds: splitSourceMs), end: clip.end);
     project.clips..removeAt(selectedClip)..insert(selectedClip, left)..insert(selectedClip + 1, right);
     selectedClip += 1;
     notifyListeners();
@@ -93,11 +85,9 @@ class EditorController extends ChangeNotifier {
 
   void deleteSelectedClip() {
     if (project.clips.isEmpty || selectedClip < 0 || selectedClip >= project.clips.length) return;
-    _snapshot();
-    project.clips.removeAt(selectedClip);
+    _snapshot(); project.clips.removeAt(selectedClip);
     if (project.clips.isNotEmpty) selectedClip = selectedClip.clamp(0, project.clips.length - 1).toInt();
-    playhead = Duration.zero;
-    notifyListeners();
+    playhead = Duration.zero; notifyListeners();
   }
 
   void addText(String text) {
@@ -106,107 +96,65 @@ class EditorController extends ChangeNotifier {
     final end = project.duration > Duration.zero ? project.duration : const Duration(seconds: 5);
     final requestedEnd = playhead + const Duration(seconds: 4);
     final element = EditorElement(id: 'text_${DateTime.now().millisecondsSinceEpoch}', kind: ElementKind.text, text: text.trim(), start: playhead, end: requestedEnd < end ? requestedEnd : end, layer: project.elements.length);
-    project.elements = [...project.elements, element];
-    selectedElementId = element.id;
+    project.elements = [...project.elements, element]; selectedElementId = element.id; notifyListeners();
+  }
+
+  void updateSelectedText({String? text, String? color, String? backgroundColor, String? fontFamily, double? fontSize, bool? bold, bool? italic, bool? outline, bool? shadow, double? outlineWidth, TextAnimation? animation}) {
+    final id = selectedElementId; if (id == null) return;
+    final index = project.elements.indexWhere((e) => e.id == id); if (index < 0) return;
+    _snapshot(); final e = project.elements[index];
+    if (text != null) e.text = text; if (color != null) e.color = color; if (backgroundColor != null) e.backgroundColor = backgroundColor;
+    if (fontFamily != null) e.fontFamily = fontFamily; if (fontSize != null) e.fontSize = fontSize; if (bold != null) e.bold = bold; if (italic != null) e.italic = italic;
+    if (outline != null) e.outline = outline; if (shadow != null) e.shadow = shadow; if (outlineWidth != null) e.outlineWidth = outlineWidth; if (animation != null) e.animation = animation;
     notifyListeners();
   }
 
   void updateSelectedElement({String? text, double? x, double? y, double? scale, double? rotation, double? opacity}) {
-    final id = selectedElementId;
-    if (id == null) return;
-    final index = project.elements.indexWhere((e) => e.id == id);
-    if (index < 0) return;
-    _snapshot();
-    final e = project.elements[index];
-    if (text != null) e.text = text;
-    if (x != null) e.x = x;
-    if (y != null) e.y = y;
-    if (scale != null) e.scale = scale;
-    if (rotation != null) e.rotation = rotation;
-    if (opacity != null) e.opacity = opacity;
-    notifyListeners();
+    final id = selectedElementId; if (id == null) return; final index = project.elements.indexWhere((e) => e.id == id); if (index < 0) return;
+    _snapshot(); final e = project.elements[index]; if (text != null) e.text = text; if (x != null) e.x = x; if (y != null) e.y = y; if (scale != null) e.scale = scale; if (rotation != null) e.rotation = rotation; if (opacity != null) e.opacity = opacity; notifyListeners();
   }
 
-  void deleteSelectedElement() {
-    final id = selectedElementId;
-    if (id == null) return;
-    final index = project.elements.indexWhere((e) => e.id == id);
-    if (index < 0) return;
-    _snapshot();
-    project.elements.removeAt(index);
-    selectedElementId = null;
-    notifyListeners();
-  }
+  void deleteSelectedElement() { final id = selectedElementId; if (id == null) return; final index = project.elements.indexWhere((e) => e.id == id); if (index < 0) return; _snapshot(); project.elements.removeAt(index); selectedElementId = null; notifyListeners(); }
 
-  void setFilter(FilterPreset filter, double intensity) {
-    _snapshot();
-    project.filter = filter;
-    project.filterIntensity = intensity.clamp(0, 1).toDouble();
-    notifyListeners();
-  }
-
-  void setAdjustment(String key, double value) {
-    _snapshot();
-    project.adjustments[key] = value;
-    notifyListeners();
-  }
-
+  void setFilter(FilterPreset filter, double intensity) { _snapshot(); project.filter = filter; project.filterIntensity = intensity.clamp(0, 1).toDouble(); notifyListeners(); }
+  void setAdjustment(String key, double value) { _snapshot(); project.adjustments[key] = value; notifyListeners(); }
   void setCanvas(CanvasRatio ratio) { _snapshot(); project.ratio = ratio; notifyListeners(); }
 
-  void setSpeed(double speed) {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return;
-    _snapshot();
-    project.clips[selectedClip] = project.clips[selectedClip].copyWith(speed: speed.clamp(.25, 4).toDouble());
-    notifyListeners();
+  void setSpeed(double speed) { if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot(); project.clips[selectedClip] = project.clips[selectedClip].copyWith(speed: speed.clamp(.25, 4).toDouble()); notifyListeners(); }
+  void toggleMuteOriginal() { if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot(); final c=project.clips[selectedClip]; project.clips[selectedClip]=c.copyWith(muted:!c.muted); notifyListeners(); }
+  void setVolume(double value) { if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot(); project.clips[selectedClip]=project.clips[selectedClip].copyWith(volume:value.clamp(0,2).toDouble()); notifyListeners(); }
+  void addAudio(AudioTrack track) { _snapshot(); project.audioTracks=[...project.audioTracks,track]; notifyListeners(); }
+  void deleteAudio(String id) { _snapshot(); project.audioTracks.removeWhere((a)=>a.id==id); notifyListeners(); }
+  void addElement(EditorElement element) { _snapshot(); project.elements=[...project.elements,element]; selectedElementId=element.id; notifyListeners(); }
+
+  void setCrop({double? left,double? top,double? right,double? bottom,double? zoom,double? panX,double? panY,double? rotation}) {
+    if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot();
+    final c=project.clips[selectedClip]; final t=c.transform;
+    t.left=left??t.left; t.top=top??t.top; t.right=right??t.right; t.bottom=bottom??t.bottom; t.zoom=zoom??t.zoom; t.panX=panX??t.panX; t.panY=panY??t.panY; t.rotation=rotation??t.rotation; notifyListeners();
   }
 
-  void toggleMuteOriginal() {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return;
-    _snapshot();
-    final clip = project.clips[selectedClip];
-    project.clips[selectedClip] = clip.copyWith(muted: !clip.muted);
-    notifyListeners();
+  void setTransition(int index, TransitionType type, Duration duration) {
+    if (index < 0 || index >= project.clips.length - 1) return; _snapshot();
+    project.clips[index] = project.clips[index].copyWith(transitionAfter:type, transitionDuration:duration); notifyListeners();
   }
 
-  void setVolume(double value) {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return;
-    _snapshot();
-    project.clips[selectedClip] = project.clips[selectedClip].copyWith(volume: value.clamp(0, 2).toDouble());
-    notifyListeners();
+  void setChroma({required double similarity, required double blend, String? color, String? backgroundPath}) {
+    if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot();
+    final c=project.clips[selectedClip]; project.clips[selectedClip]=c.copyWith(chromaSimilarity:similarity.clamp(0,1).toDouble(),chromaBlend:blend.clamp(0,1).toDouble(),chromaColor:color); if(backgroundPath!=null) project.chromaBackgroundPath=backgroundPath; notifyListeners();
   }
-
-  void addAudio(AudioTrack track) { _snapshot(); project.audioTracks = [...project.audioTracks, track]; notifyListeners(); }
-  void deleteAudio(String id) { _snapshot(); project.audioTracks.removeWhere((a) => a.id == id); notifyListeners(); }
-  void addElement(EditorElement element) { _snapshot(); project.elements = [...project.elements, element]; selectedElementId = element.id; notifyListeners(); }
 
   void addKeyframe() {
-    final id = selectedElementId;
-    if (id == null) return;
-    final index = project.elements.indexWhere((e) => e.id == id);
-    if (index < 0) return;
-    _snapshot();
-    final e = project.elements[index];
-    e.keyframes.add(Keyframe(time: playhead, x: e.x, y: e.y, scale: e.scale, rotation: e.rotation, opacity: e.opacity));
-    e.keyframes.sort((a, b) => a.time.compareTo(b.time));
-    notifyListeners();
+    final id=selectedElementId; if(id==null)return; final index=project.elements.indexWhere((e)=>e.id==id); if(index<0)return; _snapshot(); final e=project.elements[index];
+    e.keyframes.removeWhere((k)=>k.time==playhead); e.keyframes.add(Keyframe(time:playhead,x:e.x,y:e.y,scale:e.scale,rotation:e.rotation,opacity:e.opacity)); e.keyframes.sort((a,b)=>a.time.compareTo(b.time)); notifyListeners();
   }
 
-  bool undo() {
-    if (_undo.isEmpty) return false;
-    _redo.add(project.encode());
-    project = ProjectModel.fromJson(jsonDecode(_undo.removeLast()) as Map<String, dynamic>);
-    selectedClip = project.clips.isEmpty ? 0 : selectedClip.clamp(0, project.clips.length - 1).toInt();
-    dirty = true; notifyListeners(); return true;
+  Keyframe? interpolatedKeyframe(EditorElement e, Duration time) {
+    if (e.keyframes.isEmpty) return null; if (time <= e.keyframes.first.time) return e.keyframes.first; if (time >= e.keyframes.last.time) return e.keyframes.last;
+    for(var i=0;i<e.keyframes.length-1;i++) { final a=e.keyframes[i],b=e.keyframes[i+1]; if(time>=a.time&&time<=b.time){final span=b.time.inMicroseconds-a.time.inMicroseconds; final f=span==0?0:(time.inMicroseconds-a.time.inMicroseconds)/span; double lerp(double x,double y)=>x+(y-x)*f; return Keyframe(time:time,x:lerp(a.x,b.x),y:lerp(a.y,b.y),scale:lerp(a.scale,b.scale),rotation:lerp(a.rotation,b.rotation),opacity:lerp(a.opacity,b.opacity));}} return e.keyframes.last;
   }
 
-  bool redo() {
-    if (_redo.isEmpty) return false;
-    _undo.add(project.encode());
-    project = ProjectModel.fromJson(jsonDecode(_redo.removeLast()) as Map<String, dynamic>);
-    selectedClip = project.clips.isEmpty ? 0 : selectedClip.clamp(0, project.clips.length - 1).toInt();
-    dirty = true; notifyListeners(); return true;
-  }
-
-  Future<void> save() async { await storage.save(project); dirty = false; notifyListeners(); }
+  bool undo() { if(_undo.isEmpty)return false; _redo.add(project.encode()); project=ProjectModel.fromJson(jsonDecode(_undo.removeLast()) as Map<String,dynamic>); selectedClip=project.clips.isEmpty?0:selectedClip.clamp(0,project.clips.length-1).toInt(); dirty=true; notifyListeners(); return true; }
+  bool redo() { if(_redo.isEmpty)return false; _undo.add(project.encode()); project=ProjectModel.fromJson(jsonDecode(_redo.removeLast()) as Map<String,dynamic>); selectedClip=project.clips.isEmpty?0:selectedClip.clamp(0,project.clips.length-1).toInt(); dirty=true; notifyListeners(); return true; }
+  Future<void> save() async { await storage.save(project); dirty=false; notifyListeners(); }
   Future<void> duplicate() async => storage.duplicate(project.id);
 }
