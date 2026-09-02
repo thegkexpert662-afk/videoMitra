@@ -5,156 +5,39 @@ import '../models/editor_models.dart';
 import '../services/storage/project_storage.dart';
 
 class EditorController extends ChangeNotifier {
-  final ProjectStorage storage;
-  late ProjectModel project;
-  int selectedClip = 0;
-  String? selectedElementId;
-  Duration playhead = Duration.zero;
-  double timelineZoom = 1;
-  bool dirty = false;
-  final List<String> _undo = <String>[];
-  final List<String> _redo = <String>[];
-
-  EditorController({ProjectStorage? storage}) : storage = storage ?? ProjectStorage();
-
-  void initialize(List<File> files) {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final clips = files.asMap().entries.map((entry) {
-      final file = entry.value;
-      final isImage = RegExp(r'\.(jpg|jpeg|png|webp|heic)$', caseSensitive: false).hasMatch(file.path);
-      final duration = isImage ? const Duration(seconds: 5) : Duration.zero;
-      return EditorClip(id: 'clip_${now}_${entry.key}', file: file, kind: isImage ? MediaKind.image : MediaKind.video, sourceDuration: duration, start: Duration.zero, end: duration);
-    }).toList();
-    project = ProjectModel(id: 'project_$now', name: 'Untitled Project', clips: clips);
-    dirty = true;
-  }
-
-  void _snapshot() {
-    _undo.add(project.encode());
-    if (_undo.length > 60) _undo.removeAt(0);
-    _redo.clear();
-    dirty = true;
-  }
-
-  void selectClip(int index) {
-    if (index < 0 || index >= project.clips.length) return;
-    selectedClip = index;
-    playhead = clipStart(index);
-    notifyListeners();
-  }
-
-  void setPlayhead(Duration value) {
-    final total = project.duration;
-    playhead = value < Duration.zero ? Duration.zero : (value > total ? total : value);
-    notifyListeners();
-  }
-
-  Duration clipStart(int index) => project.clips.take(index).fold(Duration.zero, (a, b) => a + b.duration);
-  int clipAt(Duration position) { var cursor = Duration.zero; for (var i = 0; i < project.clips.length; i++) { cursor += project.clips[i].duration; if (position <= cursor) return i; } return project.clips.isEmpty ? -1 : project.clips.length - 1; }
-
-  void updateClipDuration(int index, Duration duration) {
-    if (index < 0 || index >= project.clips.length || duration <= Duration.zero) return;
-    final old = project.clips[index];
-    project.clips[index] = old.copyWith(start: Duration.zero, end: duration);
-    dirty = true;
-    notifyListeners();
-  }
-
-  void trimSelected(Duration start, Duration end) {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return;
-    final clip = project.clips[selectedClip];
-    if (end <= start || start < Duration.zero || end > clip.sourceDuration) return;
-    _snapshot();
-    project.clips[selectedClip] = clip.copyWith(start: start, end: end);
-    notifyListeners();
-  }
-
-  void splitAtPlayhead() {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return;
-    final clip = project.clips[selectedClip];
-    final localMs = playhead.inMilliseconds - clipStart(selectedClip).inMilliseconds;
-    final splitSourceMs = clip.start.inMilliseconds + (localMs / clip.speed).round();
-    if (splitSourceMs <= clip.start.inMilliseconds || splitSourceMs >= clip.end.inMilliseconds) return;
-    _snapshot();
-    final left = clip.copyWith(end: Duration(milliseconds: splitSourceMs), transitionAfter: TransitionType.fade);
-    final right = clip.copyWith(id: null, start: Duration(milliseconds: splitSourceMs), end: clip.end);
-    project.clips..removeAt(selectedClip)..insert(selectedClip, left)..insert(selectedClip + 1, right);
-    selectedClip += 1;
-    notifyListeners();
-  }
-
-  void deleteSelectedClip() {
-    if (project.clips.isEmpty || selectedClip < 0 || selectedClip >= project.clips.length) return;
-    _snapshot(); project.clips.removeAt(selectedClip);
-    if (project.clips.isNotEmpty) selectedClip = selectedClip.clamp(0, project.clips.length - 1).toInt();
-    playhead = Duration.zero; notifyListeners();
-  }
-
-  void addText(String text) {
-    if (text.trim().isEmpty) return;
-    _snapshot();
-    final end = project.duration > Duration.zero ? project.duration : const Duration(seconds: 5);
-    final requestedEnd = playhead + const Duration(seconds: 4);
-    final element = EditorElement(id: 'text_${DateTime.now().millisecondsSinceEpoch}', kind: ElementKind.text, text: text.trim(), start: playhead, end: requestedEnd < end ? requestedEnd : end, layer: project.elements.length);
-    project.elements = [...project.elements, element]; selectedElementId = element.id; notifyListeners();
-  }
-
-  void updateSelectedText({String? text, String? color, String? backgroundColor, String? fontFamily, double? fontSize, bool? bold, bool? italic, bool? outline, bool? shadow, double? outlineWidth, TextAnimation? animation}) {
-    final id = selectedElementId; if (id == null) return;
-    final index = project.elements.indexWhere((e) => e.id == id); if (index < 0) return;
-    _snapshot(); final e = project.elements[index];
-    if (text != null) e.text = text; if (color != null) e.color = color; if (backgroundColor != null) e.backgroundColor = backgroundColor;
-    if (fontFamily != null) e.fontFamily = fontFamily; if (fontSize != null) e.fontSize = fontSize; if (bold != null) e.bold = bold; if (italic != null) e.italic = italic;
-    if (outline != null) e.outline = outline; if (shadow != null) e.shadow = shadow; if (outlineWidth != null) e.outlineWidth = outlineWidth; if (animation != null) e.animation = animation;
-    notifyListeners();
-  }
-
-  void updateSelectedElement({String? text, double? x, double? y, double? scale, double? rotation, double? opacity}) {
-    final id = selectedElementId; if (id == null) return; final index = project.elements.indexWhere((e) => e.id == id); if (index < 0) return;
-    _snapshot(); final e = project.elements[index]; if (text != null) e.text = text; if (x != null) e.x = x; if (y != null) e.y = y; if (scale != null) e.scale = scale; if (rotation != null) e.rotation = rotation; if (opacity != null) e.opacity = opacity; notifyListeners();
-  }
-
-  void deleteSelectedElement() { final id = selectedElementId; if (id == null) return; final index = project.elements.indexWhere((e) => e.id == id); if (index < 0) return; _snapshot(); project.elements.removeAt(index); selectedElementId = null; notifyListeners(); }
-
-  void setFilter(FilterPreset filter, double intensity) { _snapshot(); project.filter = filter; project.filterIntensity = intensity.clamp(0, 1).toDouble(); notifyListeners(); }
-  void setAdjustment(String key, double value) { _snapshot(); project.adjustments[key] = value; notifyListeners(); }
-  void setCanvas(CanvasRatio ratio) { _snapshot(); project.ratio = ratio; notifyListeners(); }
-
-  void setSpeed(double speed) { if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot(); project.clips[selectedClip] = project.clips[selectedClip].copyWith(speed: speed.clamp(.25, 4).toDouble()); notifyListeners(); }
-  void toggleMuteOriginal() { if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot(); final c=project.clips[selectedClip]; project.clips[selectedClip]=c.copyWith(muted:!c.muted); notifyListeners(); }
-  void setVolume(double value) { if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot(); project.clips[selectedClip]=project.clips[selectedClip].copyWith(volume:value.clamp(0,2).toDouble()); notifyListeners(); }
-  void addAudio(AudioTrack track) { _snapshot(); project.audioTracks=[...project.audioTracks,track]; notifyListeners(); }
-  void deleteAudio(String id) { _snapshot(); project.audioTracks.removeWhere((a)=>a.id==id); notifyListeners(); }
-  void addElement(EditorElement element) { _snapshot(); project.elements=[...project.elements,element]; selectedElementId=element.id; notifyListeners(); }
-
-  void setCrop({double? left,double? top,double? right,double? bottom,double? zoom,double? panX,double? panY,double? rotation}) {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot();
-    final c=project.clips[selectedClip]; final t=c.transform;
-    t.left=left??t.left; t.top=top??t.top; t.right=right??t.right; t.bottom=bottom??t.bottom; t.zoom=zoom??t.zoom; t.panX=panX??t.panX; t.panY=panY??t.panY; t.rotation=rotation??t.rotation; notifyListeners();
-  }
-
-  void setTransition(int index, TransitionType type, Duration duration) {
-    if (index < 0 || index >= project.clips.length - 1) return; _snapshot();
-    project.clips[index] = project.clips[index].copyWith(transitionAfter:type, transitionDuration:duration); notifyListeners();
-  }
-
-  void setChroma({required double similarity, required double blend, String? color, String? backgroundPath}) {
-    if (selectedClip < 0 || selectedClip >= project.clips.length) return; _snapshot();
-    final c=project.clips[selectedClip]; project.clips[selectedClip]=c.copyWith(chromaSimilarity:similarity.clamp(0,1).toDouble(),chromaBlend:blend.clamp(0,1).toDouble(),chromaColor:color); if(backgroundPath!=null) project.chromaBackgroundPath=backgroundPath; notifyListeners();
-  }
-
-  void addKeyframe() {
-    final id=selectedElementId; if(id==null)return; final index=project.elements.indexWhere((e)=>e.id==id); if(index<0)return; _snapshot(); final e=project.elements[index];
-    e.keyframes.removeWhere((k)=>k.time==playhead); e.keyframes.add(Keyframe(time:playhead,x:e.x,y:e.y,scale:e.scale,rotation:e.rotation,opacity:e.opacity)); e.keyframes.sort((a,b)=>a.time.compareTo(b.time)); notifyListeners();
-  }
-
-  Keyframe? interpolatedKeyframe(EditorElement e, Duration time) {
-    if (e.keyframes.isEmpty) return null; if (time <= e.keyframes.first.time) return e.keyframes.first; if (time >= e.keyframes.last.time) return e.keyframes.last;
-    for(var i=0;i<e.keyframes.length-1;i++) { final a=e.keyframes[i],b=e.keyframes[i+1]; if(time>=a.time&&time<=b.time){final span=b.time.inMicroseconds-a.time.inMicroseconds; final f=span==0?0:(time.inMicroseconds-a.time.inMicroseconds)/span; double lerp(double x,double y)=>x+(y-x)*f; return Keyframe(time:time,x:lerp(a.x,b.x),y:lerp(a.y,b.y),scale:lerp(a.scale,b.scale),rotation:lerp(a.rotation,b.rotation),opacity:lerp(a.opacity,b.opacity));}} return e.keyframes.last;
-  }
-
-  bool undo() { if(_undo.isEmpty)return false; _redo.add(project.encode()); project=ProjectModel.fromJson(jsonDecode(_undo.removeLast()) as Map<String,dynamic>); selectedClip=project.clips.isEmpty?0:selectedClip.clamp(0,project.clips.length-1).toInt(); dirty=true; notifyListeners(); return true; }
-  bool redo() { if(_redo.isEmpty)return false; _undo.add(project.encode()); project=ProjectModel.fromJson(jsonDecode(_redo.removeLast()) as Map<String,dynamic>); selectedClip=project.clips.isEmpty?0:selectedClip.clamp(0,project.clips.length-1).toInt(); dirty=true; notifyListeners(); return true; }
-  Future<void> save() async { await storage.save(project); dirty=false; notifyListeners(); }
-  Future<void> duplicate() async => storage.duplicate(project.id);
+  final ProjectStorage storage; late ProjectModel project; int selectedClip=0; String? selectedElementId; Duration playhead=Duration.zero; double timelineZoom=1; bool dirty=false;
+  final List<String> _undo=<String>[]; final List<String> _redo=<String>[];
+  EditorController({ProjectStorage? storage}):storage=storage??ProjectStorage();
+  void initialize(List<File> files){final now=DateTime.now().millisecondsSinceEpoch;final clips=files.asMap().entries.map((e){final f=e.value;final image=RegExp(r'\.(jpg|jpeg|png|webp|heic)$',caseSensitive:false).hasMatch(f.path);final d=image?const Duration(seconds:5):Duration.zero;return EditorClip(id:'clip_${now}_${e.key}',file:f,kind:image?MediaKind.image:MediaKind.video,sourceDuration:d,start:Duration.zero,end:d);}).toList();project=ProjectModel(id:'project_$now',name:'Untitled Project',clips:clips);dirty=true;}
+  void _snapshot(){_undo.add(project.encode());if(_undo.length>60)_undo.removeAt(0);_redo.clear();dirty=true;}
+  void selectClip(int i){if(i<0||i>=project.clips.length)return;selectedClip=i;playhead=clipStart(i);notifyListeners();}
+  void setPlayhead(Duration v){final total=project.duration;playhead=v<Duration.zero?Duration.zero:(v>total?total:v);notifyListeners();}
+  Duration clipStart(int i)=>project.clips.take(i).fold(Duration.zero,(a,b)=>a+b.duration);
+  int clipAt(Duration p){var c=Duration.zero;for(var i=0;i<project.clips.length;i++){c+=project.clips[i].duration;if(p<=c)return i;}return project.clips.isEmpty?-1:project.clips.length-1;}
+  void updateClipDuration(int i,Duration d){if(i<0||i>=project.clips.length||d<=Duration.zero)return;project.clips[i]=project.clips[i].copyWith(start:Duration.zero,end:d);dirty=true;notifyListeners();}
+  void trimSelected(Duration s,Duration e){if(selectedClip<0||selectedClip>=project.clips.length)return;final c=project.clips[selectedClip];if(e<=s||s<Duration.zero||e>c.sourceDuration)return;_snapshot();project.clips[selectedClip]=c.copyWith(start:s,end:e);notifyListeners();}
+  void splitAtPlayhead(){if(selectedClip<0||selectedClip>=project.clips.length)return;final c=project.clips[selectedClip];final local=playhead.inMilliseconds-clipStart(selectedClip).inMilliseconds;final split=c.start.inMilliseconds+(local/c.speed).round();if(split<=c.start.inMilliseconds||split>=c.end.inMilliseconds)return;_snapshot();final left=c.copyWith(end:Duration(milliseconds:split));final right=c.copyWith(id:'${c.id}_split_${DateTime.now().millisecondsSinceEpoch}',start:Duration(milliseconds:split),end:c.end);project.clips..removeAt(selectedClip)..insert(selectedClip,left)..insert(selectedClip+1,right);selectedClip++;notifyListeners();}
+  void deleteSelectedClip(){if(project.clips.isEmpty||selectedClip<0||selectedClip>=project.clips.length)return;_snapshot();project.clips.removeAt(selectedClip);if(project.clips.isNotEmpty)selectedClip=selectedClip.clamp(0,project.clips.length-1).toInt();playhead=Duration.zero;notifyListeners();}
+  void addText(String text){if(text.trim().isEmpty)return;_snapshot();final end=project.duration>Duration.zero?project.duration:const Duration(seconds:5);final requested=playhead+const Duration(seconds:4);final e=EditorElement(id:'text_${DateTime.now().millisecondsSinceEpoch}',kind:ElementKind.text,text:text.trim(),start:playhead,end:requested<end?requested:end,layer:project.elements.length);project.elements=[...project.elements,e];selectedElementId=e.id;notifyListeners();}
+  void updateSelectedText({String? text,String? color,String? backgroundColor,String? fontFamily,double? fontSize,bool? bold,bool? italic,bool? outline,bool? shadow,double? outlineWidth,TextAnimation? animation}){final id=selectedElementId;if(id==null)return;final i=project.elements.indexWhere((e)=>e.id==id);if(i<0)return;_snapshot();final e=project.elements[i];if(text!=null)e.text=text;if(color!=null)e.color=color;if(backgroundColor!=null)e.backgroundColor=backgroundColor;if(fontFamily!=null)e.fontFamily=fontFamily;if(fontSize!=null)e.fontSize=fontSize;if(bold!=null)e.bold=bold;if(italic!=null)e.italic=italic;if(outline!=null)e.outline=outline;if(shadow!=null)e.shadow=shadow;if(outlineWidth!=null)e.outlineWidth=outlineWidth;if(animation!=null)e.animation=animation;notifyListeners();}
+  void updateSelectedElement({String? text,double? x,double? y,double? scale,double? rotation,double? opacity}){final id=selectedElementId;if(id==null)return;final i=project.elements.indexWhere((e)=>e.id==id);if(i<0)return;_snapshot();final e=project.elements[i];if(text!=null)e.text=text;if(x!=null)e.x=x;if(y!=null)e.y=y;if(scale!=null)e.scale=scale;if(rotation!=null)e.rotation=rotation;if(opacity!=null)e.opacity=opacity;notifyListeners();}
+  void deleteSelectedElement(){final id=selectedElementId;if(id==null)return;final i=project.elements.indexWhere((e)=>e.id==id);if(i<0)return;_snapshot();project.elements.removeAt(i);selectedElementId=null;notifyListeners();}
+  void setFilter(FilterPreset f,double intensity){_snapshot();project.filter=f;project.filterIntensity=intensity.clamp(0,1).toDouble();notifyListeners();}
+  void setAdjustment(String k,double v){_snapshot();project.adjustments[k]=v;notifyListeners();}
+  void setCanvas(CanvasRatio r){_snapshot();project.ratio=r;notifyListeners();}
+  void setSpeed(double s){if(selectedClip<0||selectedClip>=project.clips.length)return;_snapshot();project.clips[selectedClip]=project.clips[selectedClip].copyWith(speed:s.clamp(.25,4).toDouble());notifyListeners();}
+  void toggleMuteOriginal(){if(selectedClip<0||selectedClip>=project.clips.length)return;_snapshot();final c=project.clips[selectedClip];project.clips[selectedClip]=c.copyWith(muted:!c.muted);notifyListeners();}
+  void setVolume(double v){if(selectedClip<0||selectedClip>=project.clips.length)return;_snapshot();project.clips[selectedClip]=project.clips[selectedClip].copyWith(volume:v.clamp(0,2).toDouble());notifyListeners();}
+  void addAudio(AudioTrack t){_snapshot();project.audioTracks=[...project.audioTracks,t];notifyListeners();}
+  void deleteAudio(String id){_snapshot();project.audioTracks.removeWhere((a)=>a.id==id);notifyListeners();}
+  void addElement(EditorElement e){_snapshot();project.elements=[...project.elements,e];selectedElementId=e.id;notifyListeners();}
+  void setCrop({double? left,double? top,double? right,double? bottom,double? zoom,double? panX,double? panY,double? rotation}){if(selectedClip<0||selectedClip>=project.clips.length)return;_snapshot();final t=project.clips[selectedClip].transform;t.left=left??t.left;t.top=top??t.top;t.right=right??t.right;t.bottom=bottom??t.bottom;t.zoom=zoom??t.zoom;t.panX=panX??t.panX;t.panY=panY??t.panY;t.rotation=rotation??t.rotation;notifyListeners();}
+  void setTransition(int i,TransitionType type,Duration d){if(i<0||i>=project.clips.length-1)return;_snapshot();project.clips[i]=project.clips[i].copyWith(transitionAfter:type,transitionDuration:d);notifyListeners();}
+  void setChroma({required double similarity,required double blend,String? color,String? backgroundPath}){if(selectedClip<0||selectedClip>=project.clips.length)return;_snapshot();final c=project.clips[selectedClip];project.clips[selectedClip]=c.copyWith(chromaSimilarity:similarity.clamp(0,1).toDouble(),chromaBlend:blend.clamp(0,1).toDouble(),chromaColor:color);if(backgroundPath!=null)project.chromaBackgroundPath=backgroundPath;notifyListeners();}
+  void addKeyframe(){final id=selectedElementId;if(id==null)return;final i=project.elements.indexWhere((e)=>e.id==id);if(i<0)return;_snapshot();final e=project.elements[i];e.keyframes.removeWhere((k)=>k.time==playhead);e.keyframes.add(Keyframe(time:playhead,x:e.x,y:e.y,scale:e.scale,rotation:e.rotation,opacity:e.opacity));e.keyframes.sort((a,b)=>a.time.compareTo(b.time));notifyListeners();}
+  Keyframe? interpolatedKeyframe(EditorElement e,Duration time){if(e.keyframes.isEmpty)return null;if(time<=e.keyframes.first.time)return e.keyframes.first;if(time>=e.keyframes.last.time)return e.keyframes.last;for(var i=0;i<e.keyframes.length-1;i++){final a=e.keyframes[i],b=e.keyframes[i+1];if(time>=a.time&&time<=b.time){final span=b.time.inMicroseconds-a.time.inMicroseconds;final f=span==0?0:(time.inMicroseconds-a.time.inMicroseconds)/span;double l(double x,double y)=>x+(y-x)*f;return Keyframe(time:time,x:l(a.x,b.x),y:l(a.y,b.y),scale:l(a.scale,b.scale),rotation:l(a.rotation,b.rotation),opacity:l(a.opacity,b.opacity));}}return e.keyframes.last;}
+  bool undo(){if(_undo.isEmpty)return false;_redo.add(project.encode());project=ProjectModel.fromJson(jsonDecode(_undo.removeLast()) as Map<String,dynamic>);selectedClip=project.clips.isEmpty?0:selectedClip.clamp(0,project.clips.length-1).toInt();dirty=true;notifyListeners();return true;}
+  bool redo(){if(_redo.isEmpty)return false;_undo.add(project.encode());project=ProjectModel.fromJson(jsonDecode(_redo.removeLast()) as Map<String,dynamic>);selectedClip=project.clips.isEmpty?0:selectedClip.clamp(0,project.clips.length-1).toInt();dirty=true;notifyListeners();return true;}
+  Future<void> save()async{await storage.save(project);dirty=false;notifyListeners();}
+  Future<void> duplicate()async=>storage.duplicate(project.id);
 }
