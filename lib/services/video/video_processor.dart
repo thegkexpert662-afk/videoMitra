@@ -40,19 +40,24 @@ class VideoProcessor {
       }
     }
     final videoOut='[vmv]'; filters.add('${labels.join('')}concat=n=${project.clips.length}:v=1:a=0$videoOut');
-    args.addAll(['-filter_complex',filters.join(';'),'-map',videoOut]);
-    if(project.clips.length==1&&project.audioTracks.isEmpty&&!project.clips.first.muted){args.addAll(['-map','0:a?']);}
-    else if(project.audioTracks.isNotEmpty){
-      for(final audio in project.audioTracks){args.addAll(['-i',_q(audio.file.path)]);}
+
+    String? audioMap;
+    if(project.clips.length==1&&project.audioTracks.isEmpty&&!project.clips.first.muted){audioMap='0:a?';}
+    if(project.audioTracks.isNotEmpty){
       final audioStartIndex=project.clips.length; final audioLabels=<String>[];
+      for(final audio in project.audioTracks)args.addAll(['-i',_q(audio.file.path)]);
       for(var i=0;i<project.audioTracks.length;i++){
         final a=project.audioTracks[i],label='[a$i]'; final fadeIn=a.fadeIn.inMilliseconds/1000.0,fadeOut=a.fadeOut.inMilliseconds/1000.0;
         var af='[${audioStartIndex+i}:a]atrim=start=${a.start.inMilliseconds/1000.0}:end=${a.end.inMilliseconds/1000.0},asetpts=PTS-STARTPTS,adelay=${a.position.inMilliseconds}|${a.position.inMilliseconds},volume=${a.muted?0:a.volume}';
         if(fadeIn>0)af+=',afade=t=in:st=0:d=$fadeIn'; if(fadeOut>0)af+=',afade=t=out:st=${((a.end-a.start).inMilliseconds/1000.0-fadeOut).clamp(0,999999)}:d=$fadeOut';
         filters.add('$af$label'); audioLabels.add(label);
       }
-      filters.add('${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0[vmAudio]'); args[args.indexOf('-filter_complex')+1]=filters.join(';'); args.addAll(['-map','[vmAudio]','-shortest']);
+      filters.add('${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0[vmAudio]'); audioMap='[vmAudio]';
     }
+
+    args.addAll(['-filter_complex',filters.join(';'),'-map',videoOut]);
+    if(audioMap!=null)args.addAll(['-map',audioMap!]);
+    if(project.audioTracks.isNotEmpty)args.add('-shortest');
     args.addAll(['-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart',_q(out.path)]);
     final session=await FFmpegKit.execute(args.join(' ')); final code=await session.getReturnCode();
     return ReturnCode.isSuccess(code)&&await out.exists()?VideoProcessResult(true,file:out):const VideoProcessResult(false,error:'Export failed. Try a lower resolution or shorter project.');
